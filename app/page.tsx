@@ -12,22 +12,26 @@ import {
   Globe2,
   Heart,
   LayoutGrid,
+  LoaderCircle,
+  LogOut,
   MessageCircle,
   Plus,
   Rocket,
   Search,
   Send,
+  ShieldCheck,
   Sparkles,
   Star,
   Target,
+  UserCircle,
   Users,
   X,
   Zap,
 } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type Project = {
-  id: number;
+  id: number | string;
   name: string;
   tagline: string;
   category: string;
@@ -39,7 +43,29 @@ type Project = {
   votes: number;
   comments: number;
   badge?: string;
+  url?: string;
 };
+
+type User = { id: string; email: string; name: string; role: "member" | "admin" };
+type SavedProject = {
+  id: string;
+  name: string;
+  tagline: string;
+  url: string;
+  category: string;
+  helpNeeded: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  maker: string;
+  ownerEmail?: string;
+  rejectionReason?: string;
+};
+
+const API_BASE = "/VibeEmber/api";
+const projectPalettes = [
+  ["#e1f3e9", "#2c8958"], ["#dce8ff", "#3268ff"], ["#ffdfd1", "#ff6534"],
+  ["#eee8ff", "#7752d6"], ["#fff0bb", "#df7516"],
+];
 
 const projects: Project[] = [
   {
@@ -137,34 +163,172 @@ const categories = ["全部", "AI 工具", "微信小程序", "Web 应用", "移
 export default function Home() {
   const [category, setCategory] = useState("全部");
   const [search, setSearch] = useState("");
-  const [voted, setVoted] = useState<number[]>([1]);
+  const [voted, setVoted] = useState<Array<number | string>>([1]);
   const [joined, setJoined] = useState<number[]>([]);
   const [showSubmit, setShowSubmit] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [toast, setToast] = useState("");
+  const [user, setUser] = useState<User | null>(null);
+  const [csrfToken, setCsrfToken] = useState("");
+  const [liveProjects, setLiveProjects] = useState<Project[]>([]);
+  const [myProjects, setMyProjects] = useState<SavedProject[]>([]);
+  const [reviewProjects, setReviewProjects] = useState<SavedProject[]>([]);
+  const [showAuth, setShowAuth] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [busy, setBusy] = useState(false);
+
+  const request = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    const response = await fetch(`${API_BASE}${path}`, {
+      credentials: "same-origin",
+      ...options,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(csrfToken && options.method && options.method !== "GET" ? { "X-CSRF-Token": csrfToken } : {}),
+        ...options.headers,
+      },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "请求失败，请稍后重试");
+    return data as T;
+  };
+
+  const loadPublicProjects = async () => {
+    try {
+      const data = await request<{ projects: SavedProject[] }>("/projects");
+      setLiveProjects(data.projects.map((project, index) => {
+        const palette = projectPalettes[index % projectPalettes.length];
+        return {
+          id: project.id, name: project.name, tagline: project.tagline, category: project.category,
+          maker: project.maker, avatar: project.maker.slice(0, 1).toUpperCase(), icon: project.name.slice(0, 1).toUpperCase(),
+          color: palette[0], accent: palette[1], votes: 0, comments: 0, badge: "社区首发", url: project.url,
+        };
+      }));
+    } catch {
+      // Keep the curated launch set visible if the API is temporarily unavailable.
+    }
+  };
+
+  useEffect(() => {
+    loadPublicProjects();
+    request<{ user: User | null; csrfToken?: string }>("/auth/me")
+      .then((data) => { setUser(data.user); setCsrfToken(data.csrfToken || ""); })
+      .catch(() => undefined);
+  }, []);
+
+  const allProjects = useMemo(() => [...liveProjects, ...projects], [liveProjects]);
 
   const visibleProjects = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return projects.filter((project) => {
+    return allProjects.filter((project) => {
       const categoryMatch = category === "全部" || project.category === category;
       const searchMatch = !q || `${project.name}${project.tagline}${project.category}`.toLowerCase().includes(q);
       return categoryMatch && searchMatch;
     });
-  }, [category, search]);
+  }, [allProjects, category, search]);
 
   const notify = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
   };
 
-  const toggleVote = (id: number) => {
+  const toggleVote = (id: number | string) => {
     setVoted((items) => items.includes(id) ? items.filter((item) => item !== id) : [...items, id]);
   };
 
-  const submitProject = (event: FormEvent<HTMLFormElement>) => {
+  const openSubmit = () => {
+    if (!user) {
+      setAuthMode("register");
+      setShowAuth(true);
+      notify("注册或登录后即可发布作品");
+      return;
+    }
+    setShowSubmit(true);
+  };
+
+  const submitProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setShowSubmit(false);
-    notify("提交成功，项目已进入审核队列 🚀");
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    setBusy(true);
+    try {
+      await request("/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          name: values.get("name"), tagline: values.get("tagline"), url: values.get("url"),
+          category: values.get("category"), helpNeeded: values.get("helpNeeded"),
+        }),
+      });
+      form.reset();
+      setShowSubmit(false);
+      notify("提交成功，项目已进入真实审核队列 🚀");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "提交失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    setBusy(true);
+    try {
+      const data = await request<{ user: User; csrfToken: string }>(`/auth/${authMode}`, {
+        method: "POST",
+        body: JSON.stringify({ email: values.get("email"), password: values.get("password"), name: values.get("name") }),
+      });
+      setUser(data.user);
+      setCsrfToken(data.csrfToken);
+      setShowAuth(false);
+      notify(authMode === "register" ? "欢迎加入起飞场，现在可以发布作品了" : "登录成功");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "操作失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openAccount = async () => {
+    if (!user) {
+      setAuthMode("login");
+      setShowAuth(true);
+      return;
+    }
+    setShowAccount(true);
+    try {
+      const mine = await request<{ projects: SavedProject[] }>("/projects/mine");
+      setMyProjects(mine.projects);
+      if (user.role === "admin") {
+        const pending = await request<{ projects: SavedProject[] }>("/admin/projects?status=pending");
+        setReviewProjects(pending.projects);
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "加载失败");
+    }
+  };
+
+  const reviewProject = async (project: SavedProject, action: "approved" | "rejected") => {
+    const reason = action === "rejected" ? window.prompt("请填写驳回原因（投稿者可见）") : "";
+    if (action === "rejected" && !reason) return;
+    setBusy(true);
+    try {
+      await request(`/admin/projects/${project.id}/review`, { method: "POST", body: JSON.stringify({ action, reason }) });
+      setReviewProjects((items) => items.filter((item) => item.id !== project.id));
+      if (action === "approved") await loadPublicProjects();
+      notify(action === "approved" ? "已通过，项目现已公开展示" : "已驳回并记录原因");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "审核失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const logout = async () => {
+    try { await request("/auth/logout", { method: "POST", body: "{}" }); } catch { /* clear local state anyway */ }
+    setUser(null); setCsrfToken(""); setShowAccount(false); setMyProjects([]); setReviewProjects([]);
+    notify("已退出登录");
   };
 
   return (
@@ -183,8 +347,10 @@ export default function Home() {
         <div className="header-actions">
           <button className="icon-button" aria-label="搜索" onClick={() => setShowSearch(!showSearch)}><Search size={20} /></button>
           <button className="icon-button notification" aria-label="通知"><Bell size={20} /><i /></button>
-          <button className="submit-button" onClick={() => setShowSubmit(true)}><Plus size={17} /> 发布项目</button>
-          <button className="avatar-button" aria-label="个人中心">我</button>
+          <button className="submit-button" onClick={openSubmit}><Plus size={17} /> 发布项目</button>
+          <button className={user ? "avatar-button signed-in" : "account-button"} aria-label="个人中心" onClick={openAccount}>
+            {user ? user.name.slice(0, 1).toUpperCase() : <><UserCircle size={17} /> 登录</>}
+          </button>
         </div>
         {showSearch && (
           <div className="header-search">
@@ -201,7 +367,7 @@ export default function Home() {
           <h1>好产品，<br /><em>不该从 0 个用户</em>开始。</h1>
           <p>发布你的作品，换取真实体验和有用反馈。<br className="desktop-only" />先一起跨过冷启动，然后各凭本事起飞。</p>
           <div className="hero-actions">
-            <button className="primary-button" onClick={() => setShowSubmit(true)}>发布我的产品 <ArrowRight size={18} /></button>
+            <button className="primary-button" onClick={openSubmit}>发布我的产品 <ArrowRight size={18} /></button>
             <a className="text-button" href="#help">先帮别人一把 <ChevronRight size={17} /></a>
           </div>
           <div className="hero-proof">
@@ -251,7 +417,7 @@ export default function Home() {
                   <span className="visual-caption">MADE WITH VIBE</span>
                 </div>
                 <div className="project-info">
-                  <div className="project-title-line"><div><h3>{project.name}</h3><span>{project.category}</span></div><button className={voted.includes(project.id) ? "vote voted" : "vote"} onClick={() => toggleVote(project.id)} aria-label={`为${project.name}点赞`}><Heart size={17} fill={voted.includes(project.id) ? "currentColor" : "none"} /> {project.votes + (voted.includes(project.id) && project.id !== 1 ? 1 : 0)}</button></div>
+                  <div className="project-title-line"><div><h3>{project.url ? <a href={project.url} target="_blank" rel="noreferrer">{project.name} <ArrowRight size={13} /></a> : project.name}</h3><span>{project.category}</span></div><button className={voted.includes(project.id) ? "vote voted" : "vote"} onClick={() => toggleVote(project.id)} aria-label={`为${project.name}点赞`}><Heart size={17} fill={voted.includes(project.id) ? "currentColor" : "none"} /> {project.votes + (voted.includes(project.id) && project.id !== 1 ? 1 : 0)}</button></div>
                   <p>{project.tagline}</p>
                   <div className="project-meta"><span className="maker-avatar">{project.avatar}</span><span>{project.maker}</span><span className="meta-spacer" /><MessageCircle size={15} /><span>{project.comments}</span><Bookmark size={15} /></div>
                 </div>
@@ -325,12 +491,57 @@ export default function Home() {
             <h2 id="submit-title">让你的产品被看见</h2>
             <p>不用写商业计划书，讲清它对谁有用就好。</p>
             <form onSubmit={submitProject}>
-              <label>产品名称<input required placeholder="例如：饭搭子" /></label>
-              <label>一句话介绍<input required placeholder="你帮用户解决了什么问题？" /></label>
-              <div className="form-row"><label>产品链接<input type="url" required placeholder="https://" /></label><label>产品类型<select defaultValue=""><option value="" disabled>请选择</option><option>AI 工具</option><option>微信小程序</option><option>Web 应用</option><option>移动 App</option></select></label></div>
-              <label>现在最需要的帮助<textarea placeholder="例如：希望 20 位用户体验组队功能并留下反馈…" /></label>
-              <button className="primary-button" type="submit">提交审核 <ArrowRight size={17} /></button>
+              <label>产品名称<input name="name" required minLength={2} maxLength={40} placeholder="例如：饭搭子" /></label>
+              <label>一句话介绍<input name="tagline" required minLength={6} maxLength={100} placeholder="你帮用户解决了什么问题？" /></label>
+              <div className="form-row"><label>产品链接<input name="url" type="url" required maxLength={500} placeholder="https://" /></label><label>产品类型<select name="category" required defaultValue=""><option value="" disabled>请选择</option><option>AI 工具</option><option>微信小程序</option><option>Web 应用</option><option>移动 App</option><option>教育</option><option>生活方式</option><option>其他</option></select></label></div>
+              <label>现在最需要的帮助<textarea name="helpNeeded" required minLength={2} maxLength={300} placeholder="例如：希望 20 位用户体验组队功能并留下反馈…" /></label>
+              <button className="primary-button" type="submit" disabled={busy}>{busy ? <><LoaderCircle className="spin" size={17} /> 正在提交</> : <>提交审核 <ArrowRight size={17} /></>}</button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showAuth && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowAuth(false)}>
+          <div className="submit-modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" onMouseDown={(event) => event.stopPropagation()}>
+            <button className="modal-close" onClick={() => setShowAuth(false)} aria-label="关闭"><X size={19} /></button>
+            <span className="modal-icon"><UserCircle size={24} /></span>
+            <span className="section-kicker">{authMode === "login" ? "欢迎回来" : "加入起飞场"}</span>
+            <h2 id="auth-title">{authMode === "login" ? "登录后继续" : "建立你的开发者身份"}</h2>
+            <p>{authMode === "login" ? "查看投稿状态，继续发布和帮助其他产品。" : "你发布的每个作品，都会记录在个人主页中。"}</p>
+            <div className="auth-tabs"><button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>登录</button><button className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>注册</button></div>
+            <form onSubmit={submitAuth}>
+              {authMode === "register" && <label>昵称<input name="name" required minLength={2} maxLength={30} autoComplete="name" placeholder="你想让大家怎么称呼你" /></label>}
+              <label>邮箱<input name="email" type="email" required maxLength={180} autoComplete="email" placeholder="name@example.com" /></label>
+              <label>密码<input name="password" type="password" required minLength={8} maxLength={128} autoComplete={authMode === "login" ? "current-password" : "new-password"} placeholder="至少 8 个字符" /></label>
+              <button className="primary-button" type="submit" disabled={busy}>{busy ? <><LoaderCircle className="spin" size={17} /> 请稍候</> : <>{authMode === "login" ? "登录" : "创建账号"} <ArrowRight size={17} /></>}</button>
+            </form>
+            <small className="auth-note">继续即表示你同意社区公约：真实体验，拒绝刷量。</small>
+          </div>
+        </div>
+      )}
+
+      {showAccount && user && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowAccount(false)}>
+          <div className="submit-modal account-modal" role="dialog" aria-modal="true" aria-labelledby="account-title" onMouseDown={(event) => event.stopPropagation()}>
+            <button className="modal-close" onClick={() => setShowAccount(false)} aria-label="关闭"><X size={19} /></button>
+            <div className="account-head"><span className="account-avatar">{user.name.slice(0, 1).toUpperCase()}</span><div><span>{user.role === "admin" ? "管理员" : "开发者"}</span><h2 id="account-title">{user.name}</h2><p>{user.email}</p></div><button onClick={logout}><LogOut size={15} /> 退出</button></div>
+            {user.role === "admin" && (
+              <section className="review-panel">
+                <div className="panel-title"><div><span className="section-kicker"><ShieldCheck size={15} /> 审核工作台</span><h3>待审核投稿</h3></div><strong>{reviewProjects.length}</strong></div>
+                <div className="submission-list">
+                  {reviewProjects.map((project) => <article key={project.id}><div><span>{project.category} · {project.ownerEmail}</span><h4>{project.name}</h4><p>{project.tagline}</p><a href={project.url} target="_blank" rel="noreferrer">查看产品 <ArrowRight size={13} /></a></div><div className="review-actions"><button disabled={busy} onClick={() => reviewProject(project, "rejected")}>驳回</button><button disabled={busy} className="approve" onClick={() => reviewProject(project, "approved")}><Check size={14} /> 通过</button></div></article>)}
+                  {reviewProjects.length === 0 && <div className="panel-empty"><Check size={18} /> 暂无待审核项目</div>}
+                </div>
+              </section>
+            )}
+            <section className="my-projects">
+              <div className="panel-title"><div><span className="section-kicker"><Rocket size={15} /> 我的投稿</span><h3>项目状态</h3></div><button onClick={() => { setShowAccount(false); openSubmit(); }}><Plus size={14} /> 新建投稿</button></div>
+              <div className="submission-list mine">
+                {myProjects.map((project) => <article key={project.id}><div><span>{project.category} · {new Date(project.createdAt).toLocaleDateString("zh-CN")}</span><h4>{project.name}</h4><p>{project.tagline}</p>{project.status === "rejected" && project.rejectionReason && <em>驳回原因：{project.rejectionReason}</em>}</div><span className={`status-pill ${project.status}`}>{project.status === "approved" ? "已上线" : project.status === "rejected" ? "已驳回" : "审核中"}</span></article>)}
+                {myProjects.length === 0 && <div className="panel-empty">你还没有提交项目，发布第一个吧。</div>}
+              </div>
+            </section>
           </div>
         </div>
       )}

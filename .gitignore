@@ -36,6 +36,12 @@ yarn-error.log*
 
 /dist/
 /static-dist/
+/server/data/
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.pyc
 /.wrangler/
 /outputs/
 /work/
