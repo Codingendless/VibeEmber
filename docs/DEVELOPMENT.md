@@ -135,6 +135,12 @@ npm run build:static
 
 第一次部署时，使用 `BOOTSTRAP_ADMIN_EMAIL` 指定的邮箱注册，该账号会自动获得管理员权限。其他邮箱默认为普通开发者。
 
+多人协作时，不要共享 root 账号或服务器密码。仓库提供了受限部署账号的脚本和使用说明：
+
+- [受限部署账号说明](../ops/DEPLOYMENT_ACCESS.md)
+- `ops/vibeember-deploy`：校验、发布和失败回滚
+- `ops/vibeember-status`：仅查看 VibeEmber 服务与日志
+
 ## 安全设计
 
 - 密码使用 PBKDF2-SHA256 加盐哈希，不保存明文
