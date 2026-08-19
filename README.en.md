@@ -156,6 +156,12 @@ Dev OTP emails show up in [Mailpit](http://localhost:8025). GitHub sign-in needs
 
 Architecture, ports, env vars, and production deploy: **[Development guide](docs/DEVELOPMENT.md)** (currently in Chinese).
 
+## Development guidelines (VibeCoding)
+
+This project follows a **VibeCoding** development model:
+
+- **Everything is vibe-coded; no hand-written coding.** All features, bug fixes, and refactors are done with AI pair programming. Writing code line by line manually is not part of the workflow.
+
 ## How to contribute
 
 - Sign in and publish a real product

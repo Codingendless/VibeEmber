@@ -156,6 +156,12 @@ pnpm dev                      # web :3000 / api :4000 / worker
 
 完整架构、端口、环境变量与生产部署见 **[开发文档](docs/DEVELOPMENT.md)**。
 
+## 开发说明（VibeCoding）
+
+本项目实行 **VibeCoding** 开发模式：
+
+- **全部 VibeCoding，禁止古法编程**：所有功能开发、Bug 修复与重构一律通过 AI 协作完成，不手工逐行编写代码。
+
 ## 怎么参与建设
 
 - 在网站中注册并发布你的真实产品
